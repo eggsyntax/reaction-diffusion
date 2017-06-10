@@ -1,6 +1,7 @@
 (ns reactiondiffusion.core
   ;; use x for core.matrix; m as the convention for a matrix argument
-  (:require [clojure.core.matrix :as x])
+  (:require [clojure.core.matrix :as x]
+            #_[reactiondiffusion.display :as dis])
   (:gen-class))
 
 ;; TODO consider changing default implementation for performance gains:
@@ -26,8 +27,9 @@
 
 ;; Constants
 ;; Display constants
-(def w 15)
-(def h 15)
+(def w 200)
+(def h 100)
+
 ;; Equation constants
 (def da 1.0)   ; diffusion rate of a
 (def db 0.5)   ; diffusion rate of b
@@ -46,7 +48,7 @@
   (let [x-mid (float (/ w 2))
         y-mid (float (/ h 2))]
     (->> (x/zero-matrix h w)
-         (x/emap-indexed (fn [[i j] v]
+         (x/emap-indexed (fn [[j i] v]
                            ;; (println "[i, j]" i j)
                            (let [x-diff (* -1 (Math/abs (- x-mid i)))
                                  y-diff (* -1 (Math/abs (- y-mid j)))
@@ -54,19 +56,35 @@
                                  y-val  (/ (+ y-mid y-diff) y-mid)]
                              (* x-val y-val)))))))
 
+(defn init-middle-more []
+  (let [x-mid (float (/ w 2))
+        y-mid (float (/ h 2))]
+    (->> (x/zero-matrix h w)
+         (x/emap-indexed (fn [[j i] v]
+                           ;; (println "[i, j]" i j)
+                           (let [x-diff (* -1 (Math/abs (- x-mid i)))
+                                 y-diff (* -1 (Math/abs (- y-mid j)))
+                                 x-val  (/ (+ x-mid x-diff) w)
+                                 y-val  (/ (+ y-mid y-diff) h)]
+                             (+ x-val y-val)))))))
+
 (def init init-middle)
 
 (defn display-ascii [m]
   (x/pm (x/emap (fn [v] (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
-                         0.66 "#"
-                         0.33 "+"
-                         0.00 " ")
+                          0.75 "#"
+                          0.50 "+"
+                          0.25 "."
+                          0.00 " ")
                   #_(if (> v 0.5) "#" " "))
                 m)))
 
 (defn display-num [m]
   (x/pm (x/emap (fn [v] (format "%.1f" v))
                 m)))
+
+(defn val-at [m x y]
+  ((m y) x))
 
 ;; Begin: surrounding-average code
 (defn capped-val [v cap]
@@ -84,7 +102,7 @@
         y-start (capped-val (- y 1) h)
         y-end   (capped-val (+ y 1) h)
         y-len   (- y-end y-start -1)]
-    [y-start y-len x-start x-len])) ; reversed because mat ops in y x order
+    [y-start y-len x-start x-len])) ; reversed because matrix ops are in y x order
 
 (defn surrounding-vals
   "Get the submatrix immediately surrounding the current position"
@@ -94,9 +112,31 @@
 (defn surrounding-ave
   "Get the average value surrounding a particular cell"
   [m x y]
-  (let [curval ((m y) x)
-        neighborhood (surrounding-vals m x y)
+  (let [neighborhood (surrounding-vals m x y)
         area-sum (x/esum neighborhood)]
-    (/ (- area-sum curval) (- (x/ecount neighborhood) 1))))
+    (/ (- area-sum (val-at m x y)) (- (x/ecount neighborhood) 1))))
 
 ;; End:   surrounding-average code
+
+(defn ave-diff
+  "The 2d Laplacian term representing diffusion"
+  [m x y]
+  (- (surrounding-ave m x y) (val-at m x y)))
+
+(defn next-state [m]
+  (m 6)
+  (println "advancing state.")
+  (x/emap-indexed (fn [[y x] v]
+                     (+ v (ave-diff m x y)))
+                  m))
+
+(defn run []
+  ;; (start-display) ; seems to never return until you stop the sketch...
+  (let [m (init)]
+    (loop [mp m
+           i 30]
+      (display-ascii mp)
+      (println)
+      (Thread/sleep 300)
+      (when (>= i 0)
+        (recur (next-state mp) (- i 1))))))
