@@ -9,11 +9,11 @@
 ;; (clojure.core.matrix.implementations/set-current-implementation :vectorz)
 
 ;; Basic equation:
-;;   a' = a     + (da * avediff)   ; diffusion term
+;;   a' = a     + (da * ave-diff)  ; diffusion term
 ;;              - (a * b * b)      ; subtracted by reaction
 ;;              + (fr * (1 - a))   ; feed
 
-;;   b' = b     + (db * avediff)   ; diffusion term
+;;   b' = b     + (db * ave-diff)  ; diffusion term
 ;;              + (a * b * b)      ; added by reaction
 ;;              - ((kr + fr) * b)  ; kill
 
@@ -68,8 +68,10 @@
                                  y-val  (/ (+ y-mid y-diff) h)]
                              (+ x-val y-val)))))))
 
-(def init init-middle)
+;; Set to any of the init- fns above
+(def init init-middle-more)
 
+;; display method for repl
 (defn display-ascii [m]
   (x/pm (x/emap (fn [v] (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
                           0.75 "#"
@@ -79,7 +81,10 @@
                   #_(if (> v 0.5) "#" " "))
                 m)))
 
-(defn display-num [m]
+;; display method for repl
+(defn display-num
+  "Convert numbers to single-point precision for easy display"
+  [m]
   (x/pm (x/emap (fn [v] (format "%.1f" v))
                 m)))
 
@@ -123,20 +128,84 @@
   [m x y]
   (- (surrounding-ave m x y) (val-at m x y)))
 
-(defn next-state [m]
-  (m 6)
-  (println "advancing state.")
-  (x/emap-indexed (fn [[y x] v]
-                     (+ v (ave-diff m x y)))
-                  m))
+
+(defn diffuse
+  "Apply diffusion, at some rate, to this cell. Requires extra info (matrix,
+  x, y) because it needs to get the average of surrounding cells in the matrix."
+  [m rate [y x] v] ; v is value of cell
+  (* rate (ave-diff m x y)))
+
+(defn react
+  "For sign, pass 1 to add the reaction amount or -1 to subtract it"
+  [sign [x y] v]
+  (* sign 0)
+  )
+
+(defn feed
+  [[x y] v]
+  0
+  )
+
+(defn kill
+  [[x y] v]
+  0
+  )
+
+;; No longer used, replaced by step-a/step-b
+;; (defn diffuse-all [m rate]
+;;   "Apply diffusion, at some rate, to all cells in matrix m"
+;;   (println "advancing state.")
+;;   (x/emap-indexed (fn [[y x] v] (+ v (diffuse m rate [y x] v))) m))
+
+;; Original diffuse-all fn, called in the recur step of `run`:
+;; (defn next-state [m]
+;;   (m 6)
+;;   (println "advancing state.")
+;;   (x/emap-indexed (fn [[y x] v]
+;;                     (+ v (ave-diff m x y)))
+;;                   m))
+
+;; TODO Alternate strategy for possible perf gains:
+;; - Simple: could update a and b on separate threads.
+;; - More complex: for each of a and b, could create a separate modification
+;; step for each of react/diffuse/feed-or-kill. Each could run on a separate
+;; thread, & then just add all the vectors to the current-val vector. Suspect
+;; that's probably better. Code would likely be a
+;; bit clearer too. For heaven's sake do it on a separate branch.
+
+(defn step-a
+  ;;   a' = a     + (da * ave-diff)  ; diffusion term
+  ;;              - (a * b * b)      ; subtracted by reaction
+  ;;              + (fr * (1 - a))   ; feed
+  [m]
+  (let [diffuse' (partial diffuse m da) ; diffuse gets extra info
+        react' (partial react -1)
+        ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
+        step-ops (juxt feed react' diffuse')
+        step-fn (fn [[y x] v] (apply + v (step-ops [y x] v)))]
+    (x/emap-indexed step-fn m)))
+
+(defn step-b
+  ;;   b' = b     + (db * ave-diff)  ; diffusion term
+  ;;              + (a * b * b)      ; added by reaction
+  ;;              - ((kr + fr) * b)  ; kill
+  [n]
+  (let [diffuse' (partial diffuse n db) ; diffuse gets extra info
+        react' (partial react 1)
+        ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
+        step-ops (juxt kill react' diffuse')
+        step-fn (fn [[y x] v] (apply + v (step-ops [y x] v)))]
+    (x/emap-indexed step-fn n)))
 
 (defn run []
-  ;; (start-display) ; seems to never return until you stop the sketch...
-  (let [m (init)]
+  (let [m (init)
+        n (init)]
     (loop [mp m
+           np n
            i 30]
-      (display-ascii mp)
+      (display-num np)
+      (display-ascii np)
       (println)
-      (Thread/sleep 300)
+      ;; (Thread/sleep 30)
       (when (>= i 0)
-        (recur (next-state mp) (- i 1))))))
+        (recur (step-a mp da) (step-b np db) (- i 1))))))
