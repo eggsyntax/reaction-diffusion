@@ -40,9 +40,12 @@
   "I don't do a whole lot ... yet."
   [& args])
 
+(defn init-zero []
+  (x/zero-matrix h w))
+
 (defn init-rand []
   (->> (x/zero-matrix h w)
-       (x/emap (fn [_] (rand)))))
+       (x/emap (fn [_] (/ (rand) 0.97)))))
 
 (defn init-middle []
   (let [x-mid (float (/ w 2))
@@ -62,10 +65,11 @@
     (->> (x/zero-matrix h w)
          (x/emap-indexed (fn [[j i] v]
                            ;; (println "[i, j]" i j)
+                           ;; x-diff, y-diff -- x or y distance from center
                            (let [x-diff (* -1 (Math/abs (- x-mid i)))
                                  y-diff (* -1 (Math/abs (- y-mid j)))
-                                 x-val  (/ (+ x-mid x-diff) w)
-                                 y-val  (/ (+ y-mid y-diff) h)]
+                                 x-val  (/ (+ x-mid x-diff) (+ 1 w))
+                                 y-val  (/ (+ y-mid y-diff) (+ 1 h))]
                              (+ x-val y-val)))))))
 
 ;; Set to any of the init- fns above
@@ -74,11 +78,13 @@
 ;; display method for repl
 (defn display-ascii [m]
   (x/pm (x/emap (fn [v] (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
+                          1.00 "!" ; shouldn't see these
                           0.75 "#"
                           0.50 "+"
                           0.25 "."
-                          0.00 " ")
-                  #_(if (> v 0.5) "#" " "))
+                         -0.00 " "
+                         -10.00 "&" ; shouldn't see these
+                         ))
                 m)))
 
 ;; display method for repl
@@ -128,28 +134,47 @@
   [m x y]
   (- (surrounding-ave m x y) (val-at m x y)))
 
+;; (def in-a (atom nil)) ; needed when printing debug output
 
 (defn diffuse
   "Apply diffusion, at some rate, to this cell. Requires extra info (matrix,
   x, y) because it needs to get the average of surrounding cells in the matrix."
   [m rate [y x] v] ; v is value of cell
+  #_(let [res (* rate (ave-diff m x y))]
+    (when (and (= y 5) (= x 10) @in-a)
+      (println "val diffuse" res))
+    res)
   (* rate (ave-diff m x y)))
 
 (defn react
-  "For sign, pass 1 to add the reaction amount or -1 to subtract it"
-  [sign [x y] v]
-  (* sign 0)
-  )
+  "For sign, pass 1 to add the reaction amount or -1 to subtract it. For other,
+  pass another matrix to react with."
+  [sign other [y x] v]
+  (let [other-cur ((other y) x)]
+    ;; (println (format "%2d %8f %8f %8f" sign v other-cur (* sign v other-cur other-cur)))
+    #_(let [res (* sign v other-cur other-cur)]
+      (when (and (= y 5) (= x 10) @in-a)
+        (println "react cur" v)
+        (println "other-cur" other-cur)
+        (println "val react  " res))
+      res)
+    (* sign v other-cur other-cur)))
 
 (defn feed
-  [[x y] v]
-  0
-  )
+  [[y x] v]
+  #_(let [res (* fr (- 1 v))]
+    (when (and (= y 5) (= x 10) @in-a)
+      (println "val feed   " res))
+    res) ; print a representative value
+  (* fr (- 1 v)))
 
 (defn kill
-  [[x y] v]
-  0
-  )
+  [[y x] v]
+  #_(let [res (* -1 (+ kr fr) v)]
+    (when (and (= y 5) (= x 10) @in-a)
+      (println "val kill   " res))
+    res)
+  (* -1 (+ kr fr) v))
 
 ;; No longer used, replaced by step-a/step-b
 ;; (defn diffuse-all [m rate]
@@ -177,35 +202,44 @@
   ;;   a' = a     + (da * ave-diff)  ; diffusion term
   ;;              - (a * b * b)      ; subtracted by reaction
   ;;              + (fr * (1 - a))   ; feed
-  [m]
+  [m other]
+  (reset! in-a true)
   (let [diffuse' (partial diffuse m da) ; diffuse gets extra info
-        react' (partial react -1)
+        react' (partial react -1 other)
         ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
         step-ops (juxt feed react' diffuse')
-        step-fn (fn [[y x] v] (apply + v (step-ops [y x] v)))]
+        step-fn (fn [[y x] v] #_(apply + v (step-ops [y x] v))
+                  (let [res (apply + v (step-ops [y x] v))]
+                    (when (and (= y 5) (= x 10) @in-a)
+                      (println "       cur" v)
+                      (println "   new-val" res))
+                    res))]
     (x/emap-indexed step-fn m)))
 
 (defn step-b
   ;;   b' = b     + (db * ave-diff)  ; diffusion term
   ;;              + (a * b * b)      ; added by reaction
   ;;              - ((kr + fr) * b)  ; kill
-  [n]
+  [n other]
+  (reset! in-a nil)
   (let [diffuse' (partial diffuse n db) ; diffuse gets extra info
-        react' (partial react 1)
+        react' (partial react 1 other)
         ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
         step-ops (juxt kill react' diffuse')
         step-fn (fn [[y x] v] (apply + v (step-ops [y x] v)))]
     (x/emap-indexed step-fn n)))
 
 (defn run []
+  ;; For running in repl -- for Quil display, call display/run
   (let [m (init)
-        n (init)]
+        n (init-rand)]
     (loop [mp m
            np n
            i 30]
-      (display-num np)
-      (display-ascii np)
+      ;; (display-num mp)
+      (display-ascii mp)
+      ;; (display-ascii np)
       (println)
       ;; (Thread/sleep 30)
       (when (>= i 0)
-        (recur (step-a mp da) (step-b np db) (- i 1))))))
+        (recur (step-a mp np) (step-b np mp) (- i 1))))))
