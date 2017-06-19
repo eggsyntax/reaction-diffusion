@@ -27,18 +27,25 @@
 
 ;; Constants
 ;; Display constants
-(def w 200)
-(def h 100)
+(def w 400)
+(def h 200)
+
+(def x-mid (int (/ w 2)))
+(def y-mid (int (/ h 2)))
 
 ;; Equation constants
-(def da 1.0)   ; diffusion rate of a
-(def db 0.5)   ; diffusion rate of b
-(def fr 0.055) ; feed rate of a
-(def kr 0.062) ; kill rate of b
+(def da 0.9)   ; diffusion rate of a
+(def db 0.4)   ; diffusion rate of b
+(def fr 0.050) ; feed rate of a
+(def kr 0.060) ; kill rate of b
 
 (defn -main
   "I don't do a whole lot ... yet."
   [& args])
+
+(defn init-one []
+  (->> (x/zero-matrix h w)
+       (x/emap (fn [_] 0.98))))
 
 (defn init-zero []
   (x/zero-matrix h w))
@@ -48,16 +55,14 @@
        (x/emap (fn [_] (/ (rand) 0.97)))))
 
 (defn init-middle []
-  (let [x-mid (float (/ w 2))
-        y-mid (float (/ h 2))]
-    (->> (x/zero-matrix h w)
-         (x/emap-indexed (fn [[j i] v]
-                           ;; (println "[i, j]" i j)
-                           (let [x-diff (* -1 (Math/abs (- x-mid i)))
-                                 y-diff (* -1 (Math/abs (- y-mid j)))
-                                 x-val  (/ (+ x-mid x-diff) x-mid)
-                                 y-val  (/ (+ y-mid y-diff) y-mid)]
-                             (* x-val y-val)))))))
+  (->> (x/zero-matrix h w)
+       (x/emap-indexed (fn [[j i] v]
+                         ;; (println "[i, j]" i j)
+                         (let [x-diff (* -1 (Math/abs (- x-mid i)))
+                               y-diff (* -1 (Math/abs (- y-mid j)))
+                               x-val  (/ (+ x-mid x-diff) (+ 1 x-mid))
+                               y-val  (/ (+ y-mid y-diff) (+ 1 y-mid))]
+                           (* x-val y-val))))))
 
 (defn init-middle-more []
   (let [x-mid (float (/ w 2))
@@ -77,15 +82,31 @@
 
 ;; display method for repl
 (defn display-ascii [m]
-  (x/pm (x/emap (fn [v] (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
-                          1.00 "!" ; shouldn't see these
-                          0.75 "#"
-                          0.50 "+"
-                          0.25 "."
-                         -0.00 " "
-                         -10.00 "&" ; shouldn't see these
-                         ))
-                m)))
+  #_(x/pm (x/emap (fn [v] (do
+                           (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
+                             1.00 "!" ; shouldn't see these
+                             0.75 "#"
+                             0.50 "+"
+                             0.25 "."
+                             -0.00 " "
+                             -10.00 "&" ; shouldn't see these
+                             )))
+                  m))
+  (run! println
+        (map
+         #(map (fn [v]
+                 (do
+                   #_(println v (type v))
+                   (condp <= v ; note: counterintuitively `<` because pred is called as (pred test-val v)
+                     1.00 "!" ; shouldn't see these
+                     0.75 "#"
+                     0.50 "+"
+                     0.25 "."
+                     -0.00 " "
+                     -10.00 "&" ; shouldn't see these
+                     )))
+               %)
+         m)))
 
 ;; display method for repl
 (defn display-num
@@ -93,9 +114,6 @@
   [m]
   (x/pm (x/emap (fn [v] (format "%.1f" v))
                 m)))
-
-(defn val-at [m x y]
-  ((m y) x))
 
 ;; Begin: surrounding-average code
 (defn capped-val [v cap]
@@ -115,83 +133,91 @@
         y-len   (- y-end y-start -1)]
     [y-start y-len x-start x-len])) ; reversed because matrix ops are in y x order
 
-(defn surrounding-vals
+(defn get-neighborhood
   "Get the submatrix immediately surrounding the current position"
   [m x y]
   (apply x/submatrix m (index-ranges x y)))
 
+;; (defn weight-neighborhood [neighborhood]
+;;   ;; Assumes neighborhood is 3x3
+;;   (letfn [(weight [[y x] v]
+;;             (cond
+;;               (and (= x 1) (= y 1)) 0      ; don't include self
+;;               (or  (= x 1) (= y 1)) (* 0.2 v)      ; orthogonal
+;;               :else                 (* 0.05 v)))]))  ; diagonal
+
+(defn weight-neighborhood [[y x] v]
+  ;; Assumes neighborhood is 3x3
+  ;; TODO hence gives wrong value at edges.
+  (cond
+    (and (= x 1) (= y 1)) 0      ; don't include self
+    (or  (= x 1) (= y 1)) (* 0.2 v)      ; orthogonal
+    :else                 (* 0.05 v)))   ; diagonal
+
 (defn surrounding-ave
   "Get the average value surrounding a particular cell"
   [m x y]
-  (let [neighborhood (surrounding-vals m x y)
-        area-sum (x/esum neighborhood)]
-    (/ (- area-sum (val-at m x y)) (- (x/ecount neighborhood) 1))))
+  (let [neighborhood (get-neighborhood m x y)
+        weighted-n (x/emap-indexed weight-neighborhood neighborhood)
+        area-sum (x/esum weighted-n)]
+    ;; weighting forces divisor of one, so skip dividing.
+    area-sum))
 
 ;; End:   surrounding-average code
 
 (defn ave-diff
   "The 2d Laplacian term representing diffusion"
   [m x y]
-  (- (surrounding-ave m x y) (val-at m x y)))
+  (- (surrounding-ave m x y) (x/mget m y x)))
 
-;; (def in-a (atom nil)) ; needed when printing debug output
+(def in-a (atom nil)) ; needed when printing debug output
 
 (defn diffuse
   "Apply diffusion, at some rate, to this cell. Requires extra info (matrix,
   x, y) because it needs to get the average of surrounding cells in the matrix."
   [m rate [y x] v] ; v is value of cell
-  #_(let [res (* rate (ave-diff m x y))]
-    (when (and (= y 5) (= x 10) @in-a)
-      (println "val diffuse" res))
+  (let [res (* rate (ave-diff m x y))]
+    (when (and (= y y-mid) (= x x-mid) @in-a)
+      #_(println "val diffuse" res))
     res)
-  (* rate (ave-diff m x y)))
+  ;; (* rate (ave-diff m x y))
+)
 
 (defn react
   "For sign, pass 1 to add the reaction amount or -1 to subtract it. For other,
   pass another matrix to react with."
   [sign other [y x] v]
-  (let [other-cur ((other y) x)]
+  (let [other-cur (x/mget other y x)]
     ;; (println (format "%2d %8f %8f %8f" sign v other-cur (* sign v other-cur other-cur)))
-    #_(let [res (* sign v other-cur other-cur)]
-      (when (and (= y 5) (= x 10) @in-a)
-        (println "react cur" v)
-        (println "other-cur" other-cur)
-        (println "val react  " res))
-      res)
-    (* sign v other-cur other-cur)))
+    ;; (let [res (* sign v other-cur other-cur)]
+    ;;   (when (and (= y y-mid) (= x x-mid) @in-a)
+    ;;     #_(println "other-cur" other-cur)
+    ;;     #_(println "val react  " res))
+    ;;   res)
+    (* sign v other-cur other-cur)
+))
 
 (defn feed
   [[y x] v]
-  #_(let [res (* fr (- 1 v))]
-    (when (and (= y 5) (= x 10) @in-a)
-      (println "val feed   " res))
-    res) ; print a representative value
-  (* fr (- 1 v)))
+  ;; (* fr (- 1 v))
+  ;; print a representative value
+  (let [res (* fr (- 1 v))]
+    (when (and (= y y-mid) (= x x-mid) @in-a)
+      #_(println "val feed   " res))
+    res))
 
 (defn kill
   [[y x] v]
-  #_(let [res (* -1 (+ kr fr) v)]
-    (when (and (= y 5) (= x 10) @in-a)
-      (println "val kill   " res))
+  (let [res (* -1 (+ kr fr) v)]
+    (when (and (= y y-mid) (= x x-mid) @in-a)
+      #_(println "val kill   " res))
     res)
-  (* -1 (+ kr fr) v))
+  ;; (* -1 (+ kr fr) v)
+)
 
-;; No longer used, replaced by step-a/step-b
-;; (defn diffuse-all [m rate]
-;;   "Apply diffusion, at some rate, to all cells in matrix m"
-;;   (println "advancing state.")
-;;   (x/emap-indexed (fn [[y x] v] (+ v (diffuse m rate [y x] v))) m))
-
-;; Original diffuse-all fn, called in the recur step of `run`:
-;; (defn next-state [m]
-;;   (m 6)
-;;   (println "advancing state.")
-;;   (x/emap-indexed (fn [[y x] v]
-;;                     (+ v (ave-diff m x y)))
-;;                   m))
-
-;; TODO Alternate strategy for possible perf gains:
+;; TODO Concurrency strategies for possible perf gains:
 ;; - Simple: could update a and b on separate threads.
+;; - Medium: use reducers to parallelize the map-indexed
 ;; - More complex: for each of a and b, could create a separate modification
 ;; step for each of react/diffuse/feed-or-kill. Each could run on a separate
 ;; thread, & then just add all the vectors to the current-val vector. Suspect
@@ -209,12 +235,13 @@
         ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
         step-ops (juxt feed react' diffuse')
         step-fn (fn [[y x] v] #_(apply + v (step-ops [y x] v))
-                  (let [res (apply + v (step-ops [y x] v))]
-                    (when (and (= y 5) (= x 10) @in-a)
-                      (println "       cur" v)
-                      (println "   new-val" res))
+                  (let [res (max -0.995 (min 0.995 (apply + v (step-ops [y x] v))))]
+                    (when (and (= y y-mid) (= x x-mid) @in-a)
+                      #_(println "       cur" v)
+                      #_(println "   new-val" res))
                     res))]
-    (x/emap-indexed step-fn m)))
+    (println "step-a")
+    (time (x/emap-indexed step-fn m))))
 
 (defn step-b
   ;;   b' = b     + (db * ave-diff)  ; diffusion term
@@ -226,11 +253,12 @@
         react' (partial react 1 other)
         ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
         step-ops (juxt kill react' diffuse')
-        step-fn (fn [[y x] v] (apply + v (step-ops [y x] v)))]
+        step-fn (fn [[y x] v] (max -0.995 (min 0.995 (apply + v (step-ops [y x] v)))))]
     (x/emap-indexed step-fn n)))
 
 (defn run []
   ;; For running in repl -- for Quil display, call display/run
+  (x/set-current-implementation :vectorz)
   (let [m (init)
         n (init-rand)]
     (loop [mp m
@@ -239,7 +267,7 @@
       ;; (display-num mp)
       (display-ascii mp)
       ;; (display-ascii np)
-      (println)
+      #_(println)
       ;; (Thread/sleep 30)
       (when (>= i 0)
         (recur (step-a mp np) (step-b np mp) (- i 1))))))
