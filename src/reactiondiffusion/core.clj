@@ -27,21 +27,27 @@
 
 ;; Constants
 ;; Display constants
-(def w 400)
-(def h 200)
+(def w 200)
+(def h 100)
 
 (def x-mid (int (/ w 2)))
 (def y-mid (int (/ h 2)))
 
 ;; Equation constants
-(def da 0.9)   ; diffusion rate of a
-(def db 0.4)   ; diffusion rate of b
-(def fr 0.050) ; feed rate of a
-(def kr 0.060) ; kill rate of b
 
-(defn -main
-  "I don't do a whole lot ... yet."
-  [& args])
+;; typical values:
+;; (def da 1.0)   ; diffusion rate of a
+;; (def db 0.5)   ; diffusion rate of b
+;; (def fr 0.055) ; feed rate of a
+;; (def kr 0.062) ; kill rate of b
+
+(def da 1.0)   ; diffusion rate of a
+(def db 0.4)   ; diffusion rate of b
+(def fr 0.055) ; feed rate of a
+(def kr 0.062) ; kill rate of b
+(def rr 1.0)   ; reaction rate -- 1 = normal
+
+(def t 0.2)    ; time step
 
 (defn init-one []
   (->> (x/zero-matrix h w)
@@ -50,9 +56,11 @@
 (defn init-zero []
   (x/zero-matrix h w))
 
-(defn init-rand []
-  (->> (x/zero-matrix h w)
-       (x/emap (fn [_] (/ (rand) 0.97)))))
+(defn init-rand
+  ([] (init-rand 0.97))
+  ([chance]
+   (->> (x/zero-matrix h w)
+        (x/emap (fn [_] (/ (rand) chance))))))
 
 (defn init-middle []
   (->> (x/zero-matrix h w)
@@ -77,8 +85,29 @@
                                  y-val  (/ (+ y-mid y-diff) (+ 1 h))]
                              (+ x-val y-val)))))))
 
+(defn init-seed-in-middle
+  "cutoff-dist: num pixels away, try 3-20. variance: 0..1, random variation
+  from 1.0 *within* the cutoff/seed area."
+  ([cutoff-dist] (init-seed-in-middle cutoff-dist 0.3))
+  ([cutoff-dist variance]
+   (let [x-mid (float (/ w 2))
+         y-mid (float (/ h 2))]
+     (->> (x/zero-matrix h w)
+          (x/emap-indexed (fn [[j i] v]
+                            ;; (println "[i, j]" i j)
+                            ;; x-diff, y-diff -- x or y distance from center
+                            (let [x-diff (Math/abs (- x-mid i))
+                                  y-diff (Math/abs (- y-mid j))
+                                  total-dist (+ x-diff y-diff)]
+                              (if (< total-dist cutoff-dist)
+                                (- 1.0 (rand variance))
+                                0.0))))))))
+
 ;; Set to any of the init- fns above
 (def init init-middle-more)
+
+;; There are some ascii display fns here for convenience, but generally you'll
+;; want to call reactiondiffusion.display/run
 
 ;; display method for repl
 (defn display-ascii [m]
@@ -108,6 +137,7 @@
                %)
          m)))
 
+;; TODO not working now that I'm using core.matrix
 ;; display method for repl
 (defn display-num
   "Convert numbers to single-point precision for easy display"
@@ -172,7 +202,7 @@
 
 (def in-a (atom nil)) ; needed when printing debug output
 
-(defn diffuse
+(defn diffuse-egg-bad
   "Apply diffusion, at some rate, to this cell. Requires extra info (matrix,
   x, y) because it needs to get the average of surrounding cells in the matrix."
   [m rate [y x] v] ; v is value of cell
@@ -181,21 +211,33 @@
       #_(println "val diffuse" res))
     res)
   ;; (* rate (ave-diff m x y))
-)
+  )
+
+(defn diffuse
+  "Apply diffusion using the actual Laplacian fn"
+  ;;   f(x + dx) - 2f(x) + f(x-dx)
+  ;; + f(y + dy) - 2f(y) + f(y-dy)
+  [m rate [y x] v] ; v is value of cell
+  (if (and (> x 0) (< x (- w 1))
+           (> y 0) (< y (- h 1)))
+    (let [
+          ;; TODO half-assed boundary handling
+          ;; x (max 1 (min (- w 2) x))
+          ;; y (max 1 (min (- h 2) y))
+          xdif (+ (x/mget m y (- x 1))
+                  (x/mget m y (+ x 1))
+                  (* -2.0 (x/mget m y x)))
+          ydif (+ (x/mget m (- y 1) x)
+                  (x/mget m (+ y 1) x)
+                  (* -2.0 (x/mget m y x)))]
+      (* rate (+ xdif ydif)))
+    0))
 
 (defn react
   "For sign, pass 1 to add the reaction amount or -1 to subtract it. For other,
   pass another matrix to react with."
-  [sign other [y x] v]
-  (let [other-cur (x/mget other y x)]
-    ;; (println (format "%2d %8f %8f %8f" sign v other-cur (* sign v other-cur other-cur)))
-    ;; (let [res (* sign v other-cur other-cur)]
-    ;;   (when (and (= y y-mid) (= x x-mid) @in-a)
-    ;;     #_(println "other-cur" other-cur)
-    ;;     #_(println "val react  " res))
-    ;;   res)
-    (* sign v other-cur other-cur)
-))
+  [sign a b]
+  (* sign rr a b b))
 
 (defn feed
   [[y x] v]
@@ -213,7 +255,7 @@
       #_(println "val kill   " res))
     res)
   ;; (* -1 (+ kr fr) v)
-)
+  )
 
 ;; TODO Concurrency strategies for possible perf gains:
 ;; - Simple: could update a and b on separate threads.
@@ -224,37 +266,55 @@
 ;; that's probably better. Code would likely be a
 ;; bit clearer too. For heaven's sake do it on a separate branch.
 
+(defn scale-by-t [v]
+  (* v t))
+
 (defn step-a
   ;;   a' = a     + (da * ave-diff)  ; diffusion term
   ;;              - (a * b * b)      ; subtracted by reaction
   ;;              + (fr * (1 - a))   ; feed
+  ;;              (^ the above * t)
   [m other]
   (reset! in-a true)
+  ;; (println "step...")
   (let [diffuse' (partial diffuse m da) ; diffuse gets extra info
-        react' (partial react -1 other)
         ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
-        step-ops (juxt feed react' diffuse')
+        step-ops (juxt feed diffuse')
         step-fn (fn [[y x] v] #_(apply + v (step-ops [y x] v))
-                  (let [res (max -0.995 (min 0.995 (apply + v (step-ops [y x] v))))]
-                    (when (and (= y y-mid) (= x x-mid) @in-a)
-                      #_(println "       cur" v)
-                      #_(println "   new-val" res))
+                  (let [bval (x/mget other y x)
+                        react-val (react -1.0 v bval)
+                        res (max -0.995 (min 0.995 (+ v (scale-by-t (apply + react-val (step-ops [y x] v))))))]
+                    ;; (let [res (+ v (scale-by-t (apply + (step-ops [y x] v))))]
+                    (when (and (= y 75) (= x 75) @in-a)
+                      ;; (println "       cur" v)
+                      ;; (println "   new-val" res)
+                      )
                     res))]
-    (println "step-a")
-    (time (x/emap-indexed step-fn m))))
+    ;; (let [result (time (x/emap-indexed step-fn m))]
+    (let [result (x/emap-indexed step-fn m)]
+      ;; (println "...a")
+      result)))
 
 (defn step-b
   ;;   b' = b     + (db * ave-diff)  ; diffusion term
   ;;              + (a * b * b)      ; added by reaction
   ;;              - ((kr + fr) * b)  ; kill
+  ;;              (^ the above * t)
   [n other]
   (reset! in-a nil)
+  ;; (println "step...")
   (let [diffuse' (partial diffuse n db) ; diffuse gets extra info
-        react' (partial react 1 other)
         ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
-        step-ops (juxt kill react' diffuse')
-        step-fn (fn [[y x] v] (max -0.995 (min 0.995 (apply + v (step-ops [y x] v)))))]
-    (x/emap-indexed step-fn n)))
+        step-ops (juxt kill diffuse')
+        step-fn (fn [[y x] v]
+                  (let [aval (x/mget other y x)
+                        react-val (react 1.0 aval v)]
+                    (max -0.995 (min 0.995 (+ v (scale-by-t (apply + react-val (step-ops [y x] v))))))))]
+    ;; step-fn (fn [[y x] v] (+ v (scale-by-t (apply + (step-ops [y x] v)))))]
+    ;; (let [result (time (x/emap-indexed step-fn n))]
+    (let [result (x/emap-indexed step-fn n)]
+      ;; (println "...b")
+      result)))
 
 (defn run []
   ;; For running in repl -- for Quil display, call display/run

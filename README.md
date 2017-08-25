@@ -1,6 +1,6 @@
 # reactiondiffusion
 
-FIXME: description
+Demonstrates reaction-diffusion equations
 
 ## Installation
 
@@ -8,13 +8,13 @@ Download from http://example.com/FIXME.
 
 ## Usage
 
-FIXME: explanation
-
-    $ java -jar reactiondiffusion-0.1.0-standalone.jar [args]
+- `lein repl`. Note that you may need to do this from the command line (rather than in an editor) -- there are some issues with running quil in an editor repl.
+- From `reactiondiffusion.display`, call `(run)`.
+- Constants can be changed at the top of `core` and `display`.
 
 ## Options
 
-FIXME: listing of options this app accepts.
+n/a
 
 ## Examples
 
@@ -22,7 +22,7 @@ FIXME: listing of options this app accepts.
 
 ### Bugs
 
-...
+See TODO comments
 
 ### Any Other Sections
 ### That You Think
