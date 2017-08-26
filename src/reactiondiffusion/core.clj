@@ -40,6 +40,7 @@
 (def db (atom 0.5))   ; diffusion rate of b
 (def fr (atom 0.055)) ; feed rate of a
 (def kr (atom 0.062)) ; kill rate of b
+(def rr (atom 1.0))   ; reaction rate
 
 (def param-defaults
   {da 1.0   ; diffusion rate of a
