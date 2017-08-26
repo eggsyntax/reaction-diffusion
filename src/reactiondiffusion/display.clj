@@ -5,6 +5,8 @@
             [reactiondiffusion.color :as color]
             [reactiondiffusion.core :as core]))
 
+(def cell-size 4)
+
 (def w (* core/w cell-size))
 (def h (* core/h cell-size))
 
@@ -92,7 +94,7 @@ time step:   %.4f\n"
   [v-atom-kwd]
   (let [v-atom (as-var v-atom-kwd)
         old-val @v-atom]
-    (swap! v-atom (partial * 6/5))))
+    (swap! v-atom (partial * 16/15))))
 
 (defn- decrease
   "For documentation purposes, pass a keyword version of the name of the
@@ -100,7 +102,7 @@ time step:   %.4f\n"
   [v-atom-kwd]
   (let [v-atom (as-var v-atom-kwd)
         old-val @v-atom]
-    (swap! v-atom (partial * 5/6))))
+    (swap! v-atom (partial * 15/16))))
 
 (defn handle-keypress []
   (let [cur-key (q/key-as-keyword)]

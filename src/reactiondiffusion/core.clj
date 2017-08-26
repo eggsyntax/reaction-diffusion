@@ -27,8 +27,8 @@
 
 ;; Constants
 ;; Display constants
-(def w 100)
-(def h 100)
+(def w 300)
+(def h 150)
 
 (def x-mid (int (/ w 2)))
 (def y-mid (int (/ h 2)))
