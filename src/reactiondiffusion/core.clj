@@ -27,7 +27,7 @@
 
 ;; Constants
 ;; Display constants
-(def w 200)
+(def w 100)
 (def h 100)
 
 (def x-mid (int (/ w 2)))
@@ -36,18 +36,34 @@
 ;; Equation constants
 
 ;; typical values:
-;; (def da 1.0)   ; diffusion rate of a
-;; (def db 0.5)   ; diffusion rate of b
-;; (def fr 0.055) ; feed rate of a
-;; (def kr 0.062) ; kill rate of b
+(def da (atom 1.0))   ; diffusion rate of a
+(def db (atom 0.5))   ; diffusion rate of b
+(def fr (atom 0.055)) ; feed rate of a
+(def kr (atom 0.062)) ; kill rate of b
 
-(def da 1.0)   ; diffusion rate of a
-(def db 0.4)   ; diffusion rate of b
-(def fr 0.055) ; feed rate of a
-(def kr 0.062) ; kill rate of b
-(def rr 1.0)   ; reaction rate -- 1 = normal
+(def param-defaults
+  {da 1.0   ; diffusion rate of a
+   db 0.5   ; diffusion rate of b
+   fr 0.055 ; feed rate of a
+   kr 0.062 ; kill rate of b
+   rr 1.0   ; reaction rate -- 1 = normal
+   t  0.2})  ; time step
 
-(def t 0.2)    ; time step
+(defn- reset-param
+  "Move a param toward its defaults. Pass an amount by which to move it,
+  eg `(reset-param kr 0.7)` will move the kill rate 70% of the way
+  toward its default value of 0.062. 100% by default."
+  ([param] (reset-param param 1.0))
+  ([amount param]
+   (swap! param (fn [cur-val]
+                  (let [default-val (param-defaults param)
+                        delta (- default-val cur-val)
+                        partial-delta (* delta amount)]
+                    (+ cur-val partial-delta))))))
+
+(defn reset-params
+  ([] (reset-params 1.0))
+  ([amount] (run! (partial reset-param amount) (keys param-defaults))))
 
 (defn init-one []
   (->> (x/zero-matrix h w)
@@ -237,20 +253,20 @@
   "For sign, pass 1 to add the reaction amount or -1 to subtract it. For other,
   pass another matrix to react with."
   [sign a b]
-  (* sign rr a b b))
+  (* sign @rr a b b))
 
 (defn feed
   [[y x] v]
   ;; (* fr (- 1 v))
   ;; print a representative value
-  (let [res (* fr (- 1 v))]
+  (let [res (* @fr (- 1 v))]
     (when (and (= y y-mid) (= x x-mid) @in-a)
       #_(println "val feed   " res))
     res))
 
 (defn kill
   [[y x] v]
-  (let [res (* -1 (+ kr fr) v)]
+  (let [res (* -1 (+ @kr @fr) v)]
     (when (and (= y y-mid) (= x x-mid) @in-a)
       #_(println "val kill   " res))
     res)
@@ -267,7 +283,7 @@
 ;; bit clearer too. For heaven's sake do it on a separate branch.
 
 (defn scale-by-t [v]
-  (* v t))
+  (* v @t))
 
 (defn step-a
   ;;   a' = a     + (da * ave-diff)  ; diffusion term
@@ -277,7 +293,7 @@
   [m other]
   (reset! in-a true)
   ;; (println "step...")
-  (let [diffuse' (partial diffuse m da) ; diffuse gets extra info
+  (let [diffuse' (partial diffuse m @da) ; diffuse gets extra info
         ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
         step-ops (juxt feed diffuse')
         step-fn (fn [[y x] v] #_(apply + v (step-ops [y x] v))
@@ -303,7 +319,7 @@
   [n other]
   (reset! in-a nil)
   ;; (println "step...")
-  (let [diffuse' (partial diffuse n db) ; diffuse gets extra info
+  (let [diffuse' (partial diffuse n @db) ; diffuse gets extra info
         ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
         step-ops (juxt kill diffuse')
         step-fn (fn [[y x] v]
