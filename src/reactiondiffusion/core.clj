@@ -218,31 +218,14 @@
   [m x y]
   (- (surrounding-ave m x y) (x/mget m y x)))
 
-(def in-a (atom nil)) ; needed when printing debug output
-
-(defn diffuse-egg-bad
-  "Apply diffusion, at some rate, to this cell. Requires extra info (matrix,
-  x, y) because it needs to get the average of surrounding cells in the matrix."
-  [m rate [y x] v] ; v is value of cell
-  (let [res (* rate (ave-diff m x y))]
-    (when (and (= y y-mid) (= x x-mid) @in-a)
-      #_(println "val diffuse" res))
-    res)
-  ;; (* rate (ave-diff m x y))
-  )
-
 (defn diffuse
-  "Apply diffusion using the actual Laplacian fn"
+  "Apply diffusion using the Laplacian fn"
   ;;   f(x + dx) - 2f(x) + f(x-dx)
   ;; + f(y + dy) - 2f(y) + f(y-dy)
-  [m rate [y x] v] ; v is value of cell
+  [m rate [y x] _]
   (if (and (> x 0) (< x (- w 1))
            (> y 0) (< y (- h 1)))
-    (let [
-          ;; TODO half-assed boundary handling
-          ;; x (max 1 (min (- w 2) x))
-          ;; y (max 1 (min (- h 2) y))
-          xdif (+ (x/mget m y (- x 1))
+    (let [xdif (+ (x/mget m y (- x 1))
                   (x/mget m y (+ x 1))
                   (* -2.0 (x/mget m y x)))
           ydif (+ (x/mget m (- y 1) x)
@@ -259,21 +242,11 @@
 
 (defn feed
   [[y x] v]
-  ;; (* fr (- 1 v))
-  ;; print a representative value
-  (let [res (* @fr (- 1 v))]
-    (when (and (= y y-mid) (= x x-mid) @in-a)
-      #_(println "val feed   " res))
-    res))
+  (* @fr (- 1 v)))
 
 (defn kill
   [[y x] v]
-  (let [res (* -1 (+ @kr @fr) v)]
-    (when (and (= y y-mid) (= x x-mid) @in-a)
-      #_(println "val kill   " res))
-    res)
-  ;; (* -1 (+ kr fr) v)
-  )
+  (* -1 (+ @kr @fr) v))
 
 ;; TODO Concurrency strategies for possible perf gains:
 ;; - Simple: could update a and b on separate threads.
@@ -293,8 +266,6 @@
   ;;              + (fr * (1 - a))   ; feed
   ;;              (^ the above * t)
   [m other]
-  (reset! in-a true)
-  ;; (println "step...")
   (let [diffuse' (partial diffuse m @da) ; diffuse gets extra info
         ;; each step-fn (feed, reach, diffuse') has signature [[y x] v]
         step-ops (juxt feed diffuse')
@@ -303,15 +274,8 @@
                         react-val (react -1.0 v bval)
                         res (max -0.995 (min 0.995 (+ v (scale-by-t (apply + react-val (step-ops [y x] v))))))]
                     ;; (let [res (+ v (scale-by-t (apply + (step-ops [y x] v))))]
-                    (when (and (= y 75) (= x 75) @in-a)
-                      ;; (println "       cur" v)
-                      ;; (println "   new-val" res)
-                      )
                     res))]
-    ;; (let [result (time (x/emap-indexed step-fn m))]
-    (let [result (x/emap-indexed step-fn m)]
-      ;; (println "...a")
-      result)))
+    (x/emap-indexed step-fn m)))
 
 (defn step-b
   ;;   b' = b     + (db * ave-diff)  ; diffusion term
@@ -319,8 +283,6 @@
   ;;              - ((kr + fr) * b)  ; kill
   ;;              (^ the above * t)
   [n other]
-  (reset! in-a nil)
-  ;; (println "step...")
   (let [diffuse' (partial diffuse n @db) ; diffuse gets extra info
         ;; each step-fn (kill, reach, diffuse') has signature [[y x] v]
         step-ops (juxt kill diffuse')
@@ -328,11 +290,7 @@
                   (let [aval (x/mget other y x)
                         react-val (react 1.0 aval v)]
                     (max -0.995 (min 0.995 (+ v (scale-by-t (apply + react-val (step-ops [y x] v))))))))]
-    ;; step-fn (fn [[y x] v] (+ v (scale-by-t (apply + (step-ops [y x] v)))))]
-    ;; (let [result (time (x/emap-indexed step-fn n))]
-    (let [result (x/emap-indexed step-fn n)]
-      ;; (println "...b")
-      result)))
+    (x/emap-indexed step-fn n)))
 
 (defn run []
   ;; For running in repl -- for Quil display, call display/run
@@ -342,10 +300,6 @@
     (loop [mp m
            np n
            i 30]
-      ;; (display-num mp)
       (display-ascii mp)
-      ;; (display-ascii np)
-      #_(println)
-      ;; (Thread/sleep 30)
       (when (>= i 0)
         (recur (step-a mp np) (step-b np mp) (- i 1))))))
