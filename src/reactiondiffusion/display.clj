@@ -5,7 +5,7 @@
             [reactiondiffusion.color :as color]
             [reactiondiffusion.core :as core]))
 
-(def cell-size 4)
+(def cell-size 3)
 
 (def w (* core/w cell-size))
 (def h (* core/h cell-size))
@@ -17,7 +17,8 @@
 (def b-state (atom nil))
 
 (def show-param-values (atom false))
-(def show-values       (atom  true))
+(def show-values       (atom false))
+(def show-help         (atom false))
 
 (defn get-params []
   (format "
@@ -59,6 +60,10 @@ time step:   %.4f\n"
   (when @show-param-values
     (q/fill 200 0 140)
     (q/text (get-params) 20 20))
+  (when @show-help
+    (q/fill 200 0 140)
+    (let [txt (with-out-str (clojure.repl/source reactiondiffusion.display/handle-keypress))]
+      (q/text txt (- (q/width) 500) 20)))
   (let [mx (q/mouse-x)
         my (q/mouse-y)
         xf (/ mx w)
@@ -94,7 +99,7 @@ time step:   %.4f\n"
   [v-atom-kwd]
   (let [v-atom (as-var v-atom-kwd)
         old-val @v-atom]
-    (swap! v-atom (partial * 16/15))))
+    (swap! v-atom (partial * 32/31))))
 
 (defn- decrease
   "For documentation purposes, pass a keyword version of the name of the
@@ -102,7 +107,7 @@ time step:   %.4f\n"
   [v-atom-kwd]
   (let [v-atom (as-var v-atom-kwd)
         old-val @v-atom]
-    (swap! v-atom (partial * 15/16))))
+    (swap! v-atom (partial * 31/32))))
 
 (defn handle-keypress []
   (let [cur-key (q/key-as-keyword)]
@@ -117,6 +122,7 @@ time step:   %.4f\n"
       :K     (decrease :kr)
       :p     (core/reset-params 0.5) ; move params halfway back to default
       :P     (core/reset-params 1.0) ; reset params to default values
+      :q     (q/exit)
       :r     (increase :rr)
       :R     (decrease :rr)
       :s     (swap! show-param-values not)
@@ -126,9 +132,7 @@ time step:   %.4f\n"
       :!     (setup)
       :c     (color/inc-color)
       :C     (color/dec-color)
-      ;; TODO: help on right side
-      ;; :h     (clojure.repl/source 'handle-keypress)
-      ;; TODO: key to reset parameter values
+      :h     (swap! show-help not)
       nil)))
 
 (defn run []
